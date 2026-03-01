@@ -65,7 +65,12 @@ router.get('/:id', async (req, res) => {
 // CREATE product (admin/superadmin)
 router.post('/', verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
     try {
-        const result = await collection.insertOne({ ...req.body, createdAt: new Date() });
+        const product = {
+            ...req.body,
+            createdAt: new Date(),
+            offerActive: req.body.offerPrice && req.body.offerEnd ? true : false
+        };
+        const result = await collection.insertOne(product);
         res.status(201).json(result);
     } catch (err) {
         console.error(err);
