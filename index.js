@@ -23,6 +23,7 @@ const verifySuperAdmin = require('./auth/superAdmin');
 const verifyToken = require('./auth/verifyToken');
 const verifyAdmin = require('./auth/admin');
 const verifyAdminOrSuperAdmin = require('./auth/verifyAdminOrSuperadmin');
+const router = require('./routes/cart');
 const uri = process.env.DB_URI;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -397,6 +398,7 @@ run().catch(console.log);
 
 
 app.use('/products', productRoutes);
+app.use('/cart', router)
 
 app.get('/', (req, res) => {
     res.send('Server is for Electronics Dipta');
