@@ -24,6 +24,8 @@ const verifyToken = require('./auth/verifyToken');
 const verifyAdmin = require('./auth/admin');
 const verifyAdminOrSuperAdmin = require('./auth/verifyAdminOrSuperadmin');
 const router = require('./routes/cart');
+const { router:sortRouter } = require('./routes/sortSearch');
+const searchRouter = require('./routes/sortSearch');
 const uri = process.env.DB_URI;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -46,7 +48,7 @@ async function run() {
         const electronicsCollection = client.db('electronicsDB').collection('electronics');
         const usersCollection = client.db('electronicsDB').collection('users');
 
-
+app.use('/search',searchRouter);
         //pending users
         app.get('/users/pending', verifyToken, async (req, res) => {
             if (["admin", "superadmin"].includes(req.user.role)) {
@@ -338,6 +340,10 @@ async function run() {
         });
 
 
+        //search sort pagination
+     
+
+
         //super admin seeding code
         async function seedSuperAdmin() {
             const superAdminEmail = process.env.SUPER_ADMIN_EMAIL;
@@ -399,6 +405,7 @@ run().catch(console.log);
 
 app.use('/products', productRoutes);
 app.use('/cart', router)
+
 
 app.get('/', (req, res) => {
     res.send('Server is for Electronics Dipta');
