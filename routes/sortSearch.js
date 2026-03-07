@@ -1,39 +1,59 @@
-const express = require('express');
-const searchInput = express.Router();  // <-- changed to searchInput
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const express = require("express");
+const searchInput = express.Router();
+const { MongoClient, ServerApiVersion } = require("mongodb");
+const Fuse = require("fuse.js");
 
-// Connect to the DB
 const client = new MongoClient(process.env.DB_URI, {
   serverApi: { version: ServerApiVersion.v1 },
 });
 
 const electronicsCollection = client.db("electronicsDB").collection("electronics");
 
-// GET products with flexible search
-searchInput.get('/', async (req, res) => {
+searchInput.get("/", async (req, res) => {
   try {
-    const { name } = req.query;
+    const { name = "", minPrice = 0, maxPrice = 1000000 } = req.query;
 
     let query = {};
-    const categories = ["mobile", "laptop", "accessories", "electronics"];
 
-    if (name && name.trim() !== "") {
+    if (name.trim() !== "") {
       const lowerName = name.toLowerCase();
+      const categories = ["mobile", "laptop", "electronics", "accessories"];
 
-      // If the search matches a category, search by category
       if (categories.includes(lowerName)) {
         query.category = lowerName;
       } else {
-        // Otherwise, search by product name (case-insensitive)
         query.name = { $regex: name, $options: "i" };
       }
     }
 
-    const products = await electronicsCollection
-      .find(query)
-      .sort({ createdAt: -1 }) // newest first
-      .limit(50) // optional limit
-      .toArray();
+    // Fetch products first
+    let products = await electronicsCollection.find(query).toArray();
+
+    // Convert price strings to numbers on-the-fly
+    products = products.map((p) => ({
+      ...p,
+      price: Number(p.price),
+    }));
+
+    // Filter by minPrice and maxPrice
+    const min = Number(minPrice);
+    const max = Number(maxPrice);
+
+    products = products.filter((p) => p.price >= min && p.price <= max);
+
+    // Fuzzy search fallback
+    if (products.length === 0 && name) {
+      const allProducts = await electronicsCollection.find({}).toArray();
+      const fuse = new Fuse(allProducts, {
+        keys: ["name", "category"],
+        threshold: 0.4,
+      });
+      const results = fuse.search(name);
+      products = results.map((r) => ({
+        ...r.item,
+        price: Number(r.item.price),
+      })).filter((p) => p.price >= min && p.price <= max);
+    }
 
     res.json({ products });
   } catch (err) {
@@ -42,4 +62,4 @@ searchInput.get('/', async (req, res) => {
   }
 });
 
-module.exports = searchInput;  // <-- export with the new name
+module.exports = searchInput;
