@@ -34,6 +34,30 @@ router.get('/', async (req, res) => {
     }
 });
 
+// GET all active offers
+router.get('/activeOffers', async (req, res) => {
+  try {
+
+    const offers = await collection.find({
+      offerActive: true,
+      $expr: {
+        $gt: [
+          { $toDate: "$offerEnd" },
+          new Date()
+        ]
+      }
+    })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+    res.json(offers);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 //category based products
 router.get('/category/:category', async (req, res) => {
     const { category } = req.params;
