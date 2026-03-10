@@ -1,5 +1,12 @@
 
-
+(async () => {
+  try {
+    await getCollection("electronics"); 
+    console.log("✅ MongoDB ready for requests");
+  } catch (err) {
+    console.error("❌ MongoDB connection failed:", err);
+  }
+})();
 // index.js
 const express = require("express");
 const cors = require("cors");
