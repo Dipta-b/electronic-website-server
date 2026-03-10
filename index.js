@@ -1,304 +1,224 @@
-const express = require('express');
-const cors = require('cors');
+// index.js
+const express = require("express");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+require("dotenv").config();
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const Fuse = require("fuse.js");
+
+// Middleware imports (create these files if you haven't)
+// verifyToken.js, verifyAdminOrSuperadmin.js, verifySuperAdmin.js
+const verifyToken = require("./auth/verifyToken");
+const verifyAdminOrSuperAdmin = require("./auth/verifyAdminOrSuperadmin");
+const verifySuperAdmin = require("./auth/superAdmin");
+const productRoutes = require('./routes/productRoutes')
+const router = require('./routes/cart')
+
+
 const app = express();
 const port = process.env.PORT || 5000;
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-app.use(cors({
-    origin: "http://localhost:5173", // your React dev server
-    credentials: true,               // allow cookies
-}));
 
-const cookieParser = require("cookie-parser");
-app.use(cookieParser());
-const productRoutes = require('./routes/productRoutes')
-
-
+// ------------------ MIDDLEWARE ------------------
 app.use(express.json());
-require('dotenv').config();
+app.use(cookieParser());
+app.use(
+  cors({
+    origin: "https://electronic-website-client.vercel.app", 
+    credentials: true,
+  })
+);
 
+// ------------------ DATABASE ------------------
+const client = new MongoClient(process.env.DB_URI, {
+  serverApi: { version: ServerApiVersion.v1 },
+});
+let db;
+let productsCollection;
+let usersCollection;
+let cartCollection;
 
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const verifySuperAdmin = require('./auth/superAdmin');
-const verifyToken = require('./auth/verifyToken');
-const verifyAdmin = require('./auth/admin');
-const verifyAdminOrSuperAdmin = require('./auth/verifyAdminOrSuperadmin');
-const router = require('./routes/cart');
-const { router:sortRouter } = require('./routes/sortSearch');
-const searchRouter = require('./routes/sortSearch');
-const uri = process.env.DB_URI;
+async function initDB() {
+  if (!db) await client.connect();
+  db = client.db("electronicsDB");
+  productsCollection = db.collection("electronics");
+  usersCollection = db.collection("users");
+  cartCollection = db.collection("carts");
+  console.log("✅ MongoDB Connected");
+}
+initDB();
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
-const client = new MongoClient(uri, {
-    serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-    }
+// ------------------ AUTH ROUTES ------------------
+
+// REGISTER
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { name, email, password, role, image } = req.body;
+    const existingUser = await usersCollection.findOne({ email });
+    if (existingUser) return res.status(400).json({ message: "User already exists" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = {
+      name,
+      email,
+      password: hashedPassword,
+      role: "user",
+      requestedRole: role || "user",
+      status: "pending",
+      image: image || "",
+      createdAt: new Date(),
+    };
+
+    const result = await usersCollection.insertOne(newUser);
+    res.status(201).json({ id: result.insertedId, ...newUser });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
-async function run() {
-    try {
-        // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
-        // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+// LOGIN
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await usersCollection.findOne({ email });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-        const electronicsCollection = client.db('electronicsDB').collection('electronics');
-        const usersCollection = client.db('electronicsDB').collection('users');
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ message: "Invalid password" });
 
-app.use('/search',searchRouter);
-        //pending users
-        app.get('/users/pending', verifyToken, async (req, res) => {
-            if (["admin", "superadmin"].includes(req.user.role)) {
-                try {
-                    const pendingUsers = await usersCollection.find({ status: "pending" }).toArray();
-                    res.json(pendingUsers);
-                } catch (err) {
-                    console.error(err);
-                    res.status(500).json({ message: "Server error" });
-                }
-            }
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-            else {
-                return res.status(403).json({ message: "Access denied" })
-            }
+   res.cookie("token", token, {
+  httpOnly: true,
+  secure: true,
+  sameSite: "none",
+});
 
-        });
+    res.json({ id: user._id, name: user.name, email: user.email, role: user.role, status: user.status, image: user.image });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
+// GET CURRENT USER
+app.get("/api/auth/me", async (req, res) => {
+  try {
+    const token = req.cookies.token;
+    if (!token) return res.status(401).json({ message: "Not authenticated" });
 
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await usersCollection.findOne({ _id: new ObjectId(decoded.id) }, { projection: { password: 0 } });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
+    res.json(user);
+  } catch (err) {
+    console.error(err);
+    res.status(401).json({ message: "Invalid token" });
+  }
+});
 
-        //User registration
-        app.post('/api/auth/register', async (req, res) => {
-            try {
-                const { name, email, password, role, image } = req.body;
+// LOGOUT
+app.post("/api/auth/logout", (req, res) => {
+res.clearCookie("token", {
+  httpOnly: true,
+  secure: true,
+  sameSite: "none",
+});
+  res.json({ message: "Logged out successfully" });
+});
 
-                const existingUser = await usersCollection.findOne({ email });
-                if (existingUser) {
-                    return res.status(400).json({ message: 'User already exists' });
-                }
+// ------------------ USERS MANAGEMENT ------------------
 
-                const hashedPassword = await bcrypt.hash(password, 10);
+// GET PENDING USERS
+app.get("/users/pending", verifyToken, async (req, res) => {
+  try {
+    if (!["admin", "superadmin"].includes(req.user.role)) return res.status(403).json({ message: "Access denied" });
+    const pendingUsers = await usersCollection.find({ status: "pending" }).toArray();
+    res.json(pendingUsers);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-                const newUser = {
-                    name,
-                    email,
-                    password: hashedPassword,
-                    role: "user",              // ✅ always user by default
-                    requestedRole: role || "user", // what they selected
-                    status: "pending",         // waiting for approval
-                    image: image || "",
-                    createdAt: new Date()
-                };
+// APPROVE USER
+app.patch("/users/approve/:id", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await usersCollection.findOne({ _id: new ObjectId(id), status: "pending" });
+    if (!user) return res.status(404).json({ message: "User not found or already approved" });
 
-                const result = await usersCollection.insertOne(newUser);
+    await usersCollection.updateOne({ _id: user._id }, { $set: { role: "admin", status: "approved" } });
+    res.json({ message: `${user.name} approved as admin` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-                res.status(201).json({
-                    id: result.insertedId,
-                    name,
-                    email,
-                    requestedRole: newUser.requestedRole,
-                    status: newUser.status,
-                    image: newUser.image
-                });
+// REJECT USER
+app.delete("/users/reject/:id", verifyToken, async (req, res) => {
+  try {
+    if (!["admin", "superadmin"].includes(req.user.role)) return res.status(403).json({ message: "Access denied" });
+    const { id } = req.params;
+    await usersCollection.deleteOne({ _id: new ObjectId(id) });
+    res.json({ message: "User rejected" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
+// ------------------ PRODUCTS ROUTES ------------------
+app.get("/products", async (req, res) => {
+  try {
+    const products = await productsCollection.find().toArray();
+    res.json(products);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-            } catch (error) {
-                console.error(error);
-                res.status(500).json({ message: "Server error" });
-            }
-        });
+app.get("/products/activeOffers", async (req, res) => {
+  try {
+    const offers = await productsCollection
+      .find({ offerActive: true, $expr: { $gt: [{ $toDate: "$offerEnd" }, new Date()] } })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(offers);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-        //user login
+app.get("/products/category/:category", async (req, res) => {
+  try {
+    const { category } = req.params;
+    const products = await productsCollection.find({ category: category.toLowerCase() }).toArray();
+    res.json(products);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-        // ==================== SIGN IN ====================
-        app.post('/api/auth/login', async (req, res) => {
-            try {
-                const { email, password } = req.body;
+app.get("/products/:id", async (req, res) => {
+  try {
+    const product = await productsCollection.findOne({ _id: new ObjectId(req.params.id) });
+    if (!product) return res.status(404).json({ message: "Product not found" });
+    res.json(product);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-                // 1️⃣ Check if user exists
-                const user = await usersCollection.findOne({ email });
-                if (!user) {
-                    return res.status(404).json({ message: "User not found" });
-                }
-
-                // 2️⃣ Check password
-                const isMatch = await bcrypt.compare(password, user.password);
-                if (!isMatch) {
-                    return res.status(401).json({ message: "Invalid password" });
-                }
-
-
-
-                // 4️⃣ Generate JWT token
-                const token = jwt.sign(
-                    { id: user._id, role: user.role },
-                    process.env.JWT_SECRET,
-                    { expiresIn: "7d" }
-                );
-
-                // 5️⃣ Send token in HTTP-only cookie
-                res.cookie('token', token, {
-                    httpOnly: true,
-                    secure: false, // set true in production with HTTPS
-                    sameSite: "lax"
-                });
-
-                // 6️⃣ Return user info (without password)
-                res.json({
-                    id: user._id,
-                    name: user.name,
-                    email: user.email,
-                    role: user.role,
-                    requestedRole: user.requestedRole,
-                    status: user.status,
-                    image: user.image
-                });
-
-            } catch (error) {
-                console.error(error);
-                res.status(500).json({ message: "Server error" });
-            }
-        });
-
-
-        // GET CURRENT USER (for reload persistence)
-        app.get("/api/auth/me", async (req, res) => {
-            try {
-                const token = req.cookies.token;
-
-                if (!token) {
-                    return res.status(401).json({ message: "Not authenticated" });
-                }
-
-                const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-                const user = await usersCollection.findOne(
-                    { _id: new ObjectId(decoded.id) },
-                    { projection: { password: 0 } } // remove password
-                );
-
-                if (!user) {
-                    return res.status(404).json({ message: "User not found" });
-                }
-
-                res.json(user);
-            } catch (error) {
-                res.status(401).json({ message: "Invalid token" });
-            }
-        });
-
-        // ==================== LOGOUT ====================
-        app.post('/api/auth/logout', (req, res) => {
-            try {
-                res.clearCookie('token', { httpOnly: true, sameSite: "strict" });
-                res.json({ message: "Logged out successfully" });
-            } catch (error) {
-                console.error(error);
-                res.status(500).json({ message: "Server error" });
-            }
-        });
-
-
-        //get all pending users
-        app.get('/users/pending', verifyToken, async (req, res) => {
-            try {
-                // Allow only admin or superadmin
-                if (!["admin", "superadmin"].includes(req.user.role)) {
-                    return res.status(403).json({ message: "Access denied" });
-                }
-
-                const pendingUsers = await usersCollection.find({ status: "pending" }).toArray();
-                res.json(pendingUsers);
-            } catch (err) {
-                console.error(err);
-                res.status(500).json({ message: "Server error" });
-            }
-        });
-        //
-        // 
-        // app.get('/api/users', verifyToken, async (req, res) => {
-        //   try {
-        //     // Only allow users with admin or superadmin roles
-        //     if (!["admin", "superadmin"].includes(req.user.role)) {
-        //       return res.status(403).json({ message: "Access denied" });
-        //     }
-
-        //     const users = await usersCollection
-        //       .find({}, { projection: { password: 0 } }) // remove password
-        //       .toArray();
-
-        //     res.json(users);
-        //   } catch (err) {
-        //     console.error(err);
-        //     res.status(500).json({ message: "Server error" });
-        //   }
-        // });
-
-        //make admin
-
-        //
-
-
-
-        app.patch('/users/approve/:id', verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
-            try {
-                const { id } = req.params;
-
-
-                const userToApprove = await usersCollection.findOne({
-                    _id
-                        : new ObjectId(id), status: "pending"
-                })
-                if (!userToApprove) {
-                    return res
-                        .status(404)
-                        .json({ message: "Pending user not found or already approved" });
-                }
-                const newRole = "admin"
-
-                await usersCollection.updateOne(
-                    { _id: userToApprove._id },
-                    {
-                        $set: {
-                            role: newRole,
-                            status: "approved"
-                        },
-                    }
-                )
-                res.json({ message: `${userToApprove.name} is now ${newRole}` });
-            } catch (error) {
-                console.error(error);
-                res.status(500).json({ message: "Server error" });
-            }
-        })
-
-        //reject for admin
-        app.delete("/users/reject/:id", verifyToken, async (req, res) => {
-            try {
-                // ✅ Manual role check inside the route
-                if (!["admin", "superadmin"].includes(req.user.role)) {
-                    return res.status(403).json({ message: "Access denied" });
-                }
-
-                const { id } = req.params;
-
-                const userToReject = await usersCollection.findOne({ _id: new ObjectId(id) });
-                if (!userToReject) return res.status(404).json({ message: "User not found" });
-
-                await usersCollection.deleteOne({ _id: userToReject._id });
-
-                res.json({ message: `${userToReject.name} rejected and removed successfully` });
-            } catch (err) {
-                console.error(err);
-                res.status(500).json({ message: "Server error" });
-            }
-        });
-
-
-        //all admins
+       //all admins
         app.get('/users/admins', verifyToken, async (req, res) => {
             try {
 
@@ -340,9 +260,39 @@ app.use('/search',searchRouter);
         });
 
 
-        //search sort pagination
-     
 
+
+// Admin routes for products
+// app.post("/products", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+//   try {
+//     const product = { ...req.body, createdAt: new Date(), offerActive: req.body.offerPrice && req.body.offerEnd ? true : false };
+//     const result = await productsCollection.insertOne(product);
+//     res.status(201).json(result);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+// app.put("/products/:id", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+//   try {
+//     const result = await productsCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: req.body });
+//     res.json(result);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+// app.delete("/products/:id", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+//   try {
+//     const result = await productsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+//     res.json(result);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
 
         //super admin seeding code
         async function seedSuperAdmin() {
@@ -391,26 +341,83 @@ app.use('/search',searchRouter);
         // seedSuperAdmin()
 
 
-    } finally {
-        // Ensures that the client will close when you finish/error
-        // await client.close();
+
+
+
+// ------------------ CART ROUTES ------------------
+app.get("/cart", verifyToken, async (req, res) => {
+  try {
+    const cart = await cartCollection.findOne({ userEmail: req.user.email });
+    res.json(cart ? cart.items : []);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.post("/cart", verifyToken, async (req, res) => {
+  try {
+    const items = req.body.items || [];
+    await cartCollection.updateOne({ userEmail: req.user.email }, { $set: { items, updatedAt: new Date() } }, { upsert: true });
+    res.json({ message: "Cart updated" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.delete("/cart", verifyToken, async (req, res) => {
+  try {
+    await cartCollection.deleteOne({ userEmail: req.user.email });
+    res.json({ message: "Cart cleared" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ------------------ SEARCH ROUTE ------------------
+app.get("/search", async (req, res) => {
+  try {
+    const { name = "", minPrice = 0, maxPrice = 1000000 } = req.query;
+    let query = {};
+
+    if (name.trim()) {
+      const lowerName = name.toLowerCase();
+      const categories = ["mobile", "laptop", "electronics", "accessories"];
+      if (categories.includes(lowerName)) query.category = lowerName;
+      else query.name = { $regex: name, $options: "i" };
     }
-}
-run().catch(console.log);
 
+    let products = await productsCollection.find(query).toArray();
+    products = products.map((p) => ({ ...p, price: Number(p.price) }));
 
+    const min = Number(minPrice);
+    const max = Number(maxPrice);
+    products = products.filter((p) => p.price >= min && p.price <= max);
 
+    if (!products.length && name) {
+      const allProducts = await productsCollection.find({}).toArray();
+      const fuse = new Fuse(allProducts, { keys: ["name", "category"], threshold: 0.4 });
+      products = fuse
+        .search(name)
+        .map((r) => ({ ...r.item, price: Number(r.item.price) }))
+        .filter((p) => p.price >= min && p.price <= max);
+    }
 
+    res.json({ products });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 
 app.use('/products', productRoutes);
 app.use('/cart', router)
 
+// ------------------ DEFAULT ROUTE ------------------
+app.get("/", (req, res) => res.send("Electronics API running"));
 
-app.get('/', (req, res) => {
-    res.send('Server is for Electronics Dipta');
-})
-
-app.listen(port, () => {
-    console.log(`lsitening on port ${port}`)
-})
+// ------------------ START SERVER ------------------
+app.listen(port, () => console.log(`Server running on port ${port}`));
