@@ -1,12 +1,4 @@
 
-(async () => {
-  try {
-    await getCollection("electronics"); 
-    console.log("✅ MongoDB ready for requests");
-  } catch (err) {
-    console.error("❌ MongoDB connection failed:", err);
-  }
-})();
 // index.js
 const express = require("express");
 const cors = require("cors");
@@ -30,18 +22,41 @@ require("dotenv").config();
 console.log("DB_URI:", process.env.DB_URI);
 
 
+
+(async () => {
+  try {
+    await getCollection("electronics");
+    console.log("✅ MongoDB ready for requests");
+  } catch (err) {
+    console.error("❌ MongoDB connection failed:", err);
+  }
+})();
+
 const app = express();
 const port = process.env.PORT || 5000;
 
 // ------------------ MIDDLEWARE ------------------
 app.use(express.json());
 app.use(cookieParser());
+// In your backend index.js
+const allowedOrigins = [
+  "http://localhost:5173", // For your local development!
+  "https://electronic-website-client.vercel.app" // Your live frontend
+];
+
 app.use(
   cors({
-    origin: "https://electronic-website-client.vercel.app",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
   })
 );
+
 
 // ------------------ AUTH ROUTES ------------------
 
@@ -88,8 +103,9 @@ app.post("/api/auth/login", async (req, res) => {
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
     res.json({ id: user._id, name: user.name, email: user.email, role: user.role, status: user.status, image: user.image });

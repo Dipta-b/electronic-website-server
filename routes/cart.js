@@ -5,7 +5,8 @@ const verifyToken = require("../auth/verifyToken");
 const { getCollection } = require("./db");
 
 // GET cart
-router.get("/", async (req, res) => {
+// ✅ FIXED
+router.get("/", verifyToken, async (req, res) => {
   try {
     const collection = await getCollection("carts");
     const cart = await collection.findOne({ userEmail: req.user.email });
