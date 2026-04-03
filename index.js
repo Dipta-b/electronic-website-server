@@ -116,7 +116,9 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // GET CURRENT USER
-app.get("/api/auth/me", async (req, res) => {
+app.get("/api/auth/me", {
+  credentials: "include",
+}, async (req, res) => {
   try {
     const token = req.cookies.token;
     if (!token) return res.status(401).json({ message: "Not authenticated" });
