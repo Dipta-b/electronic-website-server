@@ -14,7 +14,7 @@ router.get("/", async (req, res) => {
     res.json(products);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message, stack: err.stack });
   }
 });
 
