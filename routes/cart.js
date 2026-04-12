@@ -8,8 +8,12 @@ const { getCollection } = require("./db");
 // ✅ FIXED
 router.get("/", verifyToken, async (req, res) => {
   try {
+    const usersCollection = await getCollection("users");
+    const user = await usersCollection.findOne({ _id: new require("mongodb").ObjectId(req.user.id) });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
     const collection = await getCollection("carts");
-    const cart = await collection.findOne({ userEmail: req.user.email });
+    const cart = await collection.findOne({ userEmail: user.email });
     res.json(cart ? cart.items : []);
   } catch (err) {
     console.error(err);
@@ -20,10 +24,14 @@ router.get("/", verifyToken, async (req, res) => {
 // UPDATE cart
 router.post("/", verifyToken, async (req, res) => {
   try {
+    const usersCollection = await getCollection("users");
+    const user = await usersCollection.findOne({ _id: new require("mongodb").ObjectId(req.user.id) });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
     const collection = await getCollection("carts");
     const items = req.body.items || [];
     await collection.updateOne(
-      { userEmail: req.user.email },
+      { userEmail: user.email },
       { $set: { items, updatedAt: new Date() } },
       { upsert: true }
     );
@@ -37,8 +45,12 @@ router.post("/", verifyToken, async (req, res) => {
 // CLEAR cart
 router.delete("/", verifyToken, async (req, res) => {
   try {
+    const usersCollection = await getCollection("users");
+    const user = await usersCollection.findOne({ _id: new require("mongodb").ObjectId(req.user.id) });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
     const collection = await getCollection("carts");
-    await collection.deleteOne({ userEmail: req.user.email });
+    await collection.deleteOne({ userEmail: user.email });
     res.json({ message: "Cart cleared" });
   } catch (err) {
     console.error(err);
