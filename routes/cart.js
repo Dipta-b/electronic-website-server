@@ -3,13 +3,14 @@ const express = require("express");
 const router = express.Router();
 const verifyToken = require("../auth/verifyToken");
 const { getCollection } = require("./db");
+const { ObjectId } = require("mongodb");
 
 // GET cart
 // ✅ FIXED
 router.get("/", verifyToken, async (req, res) => {
   try {
     const usersCollection = await getCollection("users");
-    const user = await usersCollection.findOne({ _id: new require("mongodb").ObjectId(req.user.id) });
+    const user = await usersCollection.findOne({ _id: new ObjectId(req.user.id) });
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const collection = await getCollection("carts");
@@ -25,7 +26,7 @@ router.get("/", verifyToken, async (req, res) => {
 router.post("/", verifyToken, async (req, res) => {
   try {
     const usersCollection = await getCollection("users");
-    const user = await usersCollection.findOne({ _id: new require("mongodb").ObjectId(req.user.id) });
+    const user = await usersCollection.findOne({ _id: new ObjectId(req.user.id) });
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const collection = await getCollection("carts");
@@ -46,7 +47,7 @@ router.post("/", verifyToken, async (req, res) => {
 router.delete("/", verifyToken, async (req, res) => {
   try {
     const usersCollection = await getCollection("users");
-    const user = await usersCollection.findOne({ _id: new require("mongodb").ObjectId(req.user.id) });
+    const user = await usersCollection.findOne({ _id: new ObjectId(req.user.id) });
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const collection = await getCollection("carts");
